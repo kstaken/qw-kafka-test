@@ -5,7 +5,7 @@ use clap::{App, Arg};
 use log::info;
 use env_logger;
 
-mod consumer;
+mod client;
 mod split_store;
 
 #[tokio::main]
@@ -47,7 +47,18 @@ async fn main() {
                 .help("Output directory")
                 .takes_value(true)
                 .multiple(false)
-                .required(true),
+                .required(false)
+                .default_value("./output")
+        )
+        .arg(
+            Arg::with_name("offsets")
+                .short('c')
+                .long("offsets")
+                .help("Offsets commit directory")
+                .takes_value(true)
+                .multiple(false)
+                .required(false)
+                .default_value("./offsets")
         )
         .get_matches();
 
@@ -58,18 +69,27 @@ async fn main() {
 
     let shutdown = shutdown_tx.clone();
     tokio::spawn(async move {
-        let topics = matches.values_of("topics").unwrap().collect::<Vec<&str>>();
         let brokers = matches.value_of("brokers").unwrap();
         let group_id = matches.value_of("group-id").unwrap();
         let output_directory = matches.value_of("output").unwrap();
 
-        consumer::process(output_directory, brokers, group_id, &topics, notices_rx, shutdown).await;
+        let mut client = client::Client {
+            output_directory: output_directory.to_string(),
+            offsets_directory: "./tests/offsets".to_string(),
+            brokers: brokers.to_string(),
+            group_id: group_id.to_string(),
+            topics: matches.values_of("topics").unwrap().map(String::from).collect::<Vec<String>>(),
+            notices: notices_rx,
+            shutdown
+        };
+
+        client.process().await;
     });
 
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("Shutting Down");
-            notices_tx.send("Shutdown").unwrap();
+            notices_tx.send(String::from("Shutdown")).unwrap();
             //drop(notices_tx);
             info!("Shutdown message sent");
             drop(shutdown_tx);
